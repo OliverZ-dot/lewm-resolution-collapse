@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resolution Collapse in Latent-Space CEM Planning</title>
+<meta name="description" content="CEM planners ranking candidates through a learned world model lose all ranking signal exactly at the terminal frame they optimize. Here's how we found it, proved it's real, and fixed it.">
+<style>
+  :root {
+    --ink: #1c1c1e;
+    --muted: #5b5f66;
+    --line: #e4e4e7;
+    --accent: #1a5fb4;
+    --accent-dark: #123a70;
+    --good: #1a7a1a;
+    --bad: #b00000;
+    --bg-soft: #f7f7f8;
+    --max: 880px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    line-height: 1.6;
+    background: #fff;
+  }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+  header.hero {
+    padding: 64px 0 36px;
+    text-align: center;
+    border-bottom: 1px solid var(--line);
+  }
+  header.hero h1 {
+    font-size: 2.1rem;
+    line-height: 1.25;
+    margin: 0 0 14px;
+    letter-spacing: -0.01em;
+  }
+  header.hero p.tagline {
+    max-width: 680px;
+    margin: 0 auto 26px;
+    color: var(--muted);
+    font-size: 1.08rem;
+  }
+  .byline {
+    color: var(--muted);
+    font-size: 0.92rem;
+    margin-bottom: 26px;
+  }
+  .byline a { color: var(--muted); }
+
+  .links {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 0.92rem;
+    font-weight: 500;
+    background: var(--bg-soft);
+    transition: border-color .15s, background .15s;
+  }
+  .links a:hover { border-color: var(--accent); background: #eef4fc; }
+  .links a.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .links a.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+
+  main { padding: 48px 0; }
+  section { margin-bottom: 64px; }
+  section h2 {
+    font-size: 1.4rem;
+    margin: 0 0 18px;
+    letter-spacing: -0.01em;
+  }
+  section p { color: var(--ink); }
+
+  figure { margin: 28px 0; text-align: center; }
+  figure img { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); }
+  figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 10px; padding: 0 12px; }
+
+  .demo-figure img { max-width: 560px; }
+  .demo-note { font-size: 0.88rem; color: var(--muted); margin-top: 12px; }
+
+  ul.findings { padding-left: 0; list-style: none; margin: 20px 0; }
+  ul.findings li {
+    position: relative;
+    padding: 4px 0 14px 28px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 14px;
+  }
+  ul.findings li:last-child { border-bottom: none; }
+  ul.findings li::before {
+    content: "→";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .numbers {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+    margin: 28px 0;
+  }
+  .numbers .stat {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 16px;
+    background: var(--bg-soft);
+  }
+  .numbers .stat .n {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent-dark);
+    display: block;
+  }
+  .numbers .stat .d {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.86rem;
+  }
+  pre {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+  }
+  code.inline {
+    background: var(--bg-soft);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  .ckpt-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.92rem; }
+  .ckpt-table th, .ckpt-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .ckpt-table th { color: var(--muted); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 36px 0 56px;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  footer a { color: var(--accent-dark); }
+
+  .label-bad { color: var(--bad); font-weight: 600; }
+  .label-good { color: var(--good); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Resolution Collapse in Latent-Space CEM Planning</h1>
+    <p class="tagline">
+      A learned world model's ranking of candidate action sequences goes to chance exactly at the
+      one frame the planner uses to pick its next move. We measured it, proved it's causal, and
+      fixed it with no retraining.
+    </p>
+    <div class="byline">code and results by <a href="https://github.com/OliverZ-dot">@OliverZ-dot</a>, built on <a href="https://github.com/lucas-maes/le-wm">LeWM</a></div>
+    <div class="links">
+      <a class="primary" href="https://github.com/OliverZ-dot/lewm-resolution-collapse">Code</a>
+      <a href="paper/resolution_collapse.pdf">Paper (PDF)</a>
+      <a href="https://huggingface.co/TingheOliver/lewm-resolution-collapse">Checkpoints</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <section id="demo">
+      <figure class="demo-figure">
+        <img src="assets/success_vs_baseline.gif" alt="Side-by-side rollout: baseline times out, our fix reaches the goal">
+        <figcaption>
+          Same start, same goal, same pretrained world model, same planner. The only thing that
+          changes between the two rows is <em>which predicted frame the cost function looks at</em>.
+          A real closed-loop episode on TwoRoom, not a cherry-picked render.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="short-version">
+      <h2>The short version</h2>
+      <p>
+        Planning with a learned world model almost always works the same way: sample a bunch of
+        candidate action sequences, roll each one forward through the model, and rank candidates by
+        how close the model's <em>final</em> predicted latent state is to the goal. That ranking step
+        is the entire planner — if it's wrong, no amount of search budget fixes it.
+      </p>
+      <p>
+        We measured how good that ranking actually is, frame by frame, on four continuous-control
+        environments (TwoRoom, PushT, Reacher, Cube) built on top of <a href="https://github.com/lucas-maes/le-wm">LeWM</a>,
+        a pretrained joint-embedding world model. The result is blunt: the correlation between the
+        model's predicted candidate quality and the true candidate quality is strong five or ten steps
+        into the rollout, and collapses to chance <strong>right at the terminal frame CEM ranks on</strong>.
+        Every environment we tried shows the same pattern.
+      </p>
+
+      <div class="numbers">
+        <div class="stat"><span class="n">+3 to +15pp</span><span class="d">planner success rate from the fix, zero retraining</span></div>
+        <div class="stat"><span class="n">&minus;23 to &minus;94pp</span><span class="d">success rate if you replace the fix with matched-scale noise</span></div>
+        <div class="stat"><span class="n">&le;2pp</span><span class="d">gap between our blind rule and the exhaustive-sweep oracle</span></div>
+        <div class="stat"><span class="n">4 / 4</span><span class="d">environments show the same collapse and the same fix</span></div>
+      </div>
+
+      <ul class="findings">
+        <li>Showed the collapse tracks CEM's own planning horizon, not a fixed number of steps — stretch the horizon by 3 steps and the collapse point moves outward by exactly 3 steps.</li>
+        <li>Fixed it by ranking candidates on a frame the model can still resolve instead of the terminal one, for a 3 to 15 point planner success rate gain with zero retraining and zero extra test-time compute.</li>
+        <li>Ruled out the boring explanation with two independent random-cost controls matched in magnitude to the real fix — this isn't just "adding another term to the objective helps."</li>
+        <li>Built a rule that picks the right frame directly from the model's own resolution curve, no success-rate labels or per-environment tuning required, landing within 2 points of an exhaustive-sweep oracle on every environment.</li>
+      </ul>
+    </section>
+
+    <section id="picture">
+      <h2>What's going on, in one picture</h2>
+      <figure>
+        <img src="assets/schematic.png" alt="Schematic: how CEM plans, where resolution collapses, and the fix">
+        <figcaption>
+          CEM samples candidates, rolls each through the model, and reranks on the resulting cost (left).
+          The model's own predictions are only trustworthy up to a point — past it, the ranking signal
+          is gone (middle). The fix just moves where the cost function looks (right).
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="collapse">
+      <h2>Finding the collapse</h2>
+      <figure>
+        <img src="assets/resolution_curve.png" alt="Elite Spearman correlation vs predicted frame, four environments">
+        <figcaption>
+          Spearman correlation between predicted and ground-truth candidate cost, at each predicted
+          frame, across all four environments. Every curve starts high and falls off a cliff right at
+          the terminal step — the exact frame CEM's objective is computed on.
+        </figcaption>
+      </figure>
+      <p>
+        A horizon-manipulation test confirms this isn't an artifact of a fixed prediction horizon:
+        change CEM's planning horizon and the collapse point moves with it, step for step. That's
+        what you'd expect if the model's resolving power runs out at a roughly fixed number of
+        <em>steps ahead</em>, regardless of where the planner happens to put its terminal frame.
+      </p>
+    </section>
+
+    <section id="fix">
+      <h2>The fix</h2>
+      <p>Once you know where the model can still resolve candidates, rank on that frame instead of the terminal one.</p>
+      <figure>
+        <img src="assets/frame_sweep_rule.png" alt="Planner success rate by which predicted frame the planner asks about">
+        <figcaption>
+          Sweeping which frame the planner's objective is computed on traces an inverted U: ask too
+          early and you're ranking on something only loosely related to the goal; ask too late and
+          you're back in collapse territory. The sweet spot beats the <span class="label-bad">terminal-frame baseline</span> everywhere.
+        </figcaption>
+      </figure>
+      <p>
+        That gain survives the obvious objection — "you just added a second term to the cost, of
+        course it helps." Two random-cost controls, each matched in magnitude to the real
+        resolution-matched cost, rule it out. An additive matched-noise control is beaten by 11 to 13
+        points at p&nbsp;&lt;&nbsp;0.001. A replacement control is more dramatic: swapping in noise of
+        identical scale instead of the real signal collapses success rate by 23 to 94 points.
+      </p>
+      <figure>
+        <img src="assets/effect_summary.png" alt="The rule recovers the oracle's gain on every environment">
+        <figcaption>
+          A rule that reads the reporting frame straight off the model's own resolution curve — no
+          success-rate labels, no sweep — matches an exhaustive-sweep oracle within 2 points on every
+          environment.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="checkpoints">
+      <h2>Checkpoints</h2>
+      <p>
+        Planning in every experiment here goes through the <strong>officially released, pretrained LeWM
+        checkpoints</strong> — nothing about the base world model is retrained or fine-tuned as part of
+        this work.
+      </p>
+      <table class="ckpt-table">
+        <tr><th>checkpoint</th><th>role</th><th>source</th></tr>
+        <tr><td>lewm-tworooms / -pusht / -reacher / -cube</td><td>the frozen world model everything plans through</td><td><a href="https://huggingface.co/collections/quentinll/lewm">quentinll</a> (official LeWM release)</td></tr>
+        <tr><td>{env}_rnd.pt</td><td>RND novelty baseline for the replacement-control experiment</td><td rowspan="2"><a href="https://huggingface.co/TingheOliver/lewm-resolution-collapse">TingheOliver/lewm-resolution-collapse</a> (this work)</td></tr>
+        <tr><td>{env}_*_probe.pt</td><td>linear probes decoding physical state from LeWM's latent space</td></tr>
+      </table>
+      <p>
+        The RND nets and probes are the only things actually trained as part of this work — a few
+        hundred KB to a few MB each, documented on their <a href="https://huggingface.co/TingheOliver/lewm-resolution-collapse">model card</a>.
+      </p>
+    </section>
+
+    <section id="run-it">
+      <h2>Running it yourself</h2>
+      <p>Every figure above regenerates from results already checked into the repo, no GPU required:</p>
+      <pre>python analyze_rank_fidelity.py       # elite-set ranking fidelity numbers
+python plot_paper_resolution.py       # resolution curve figure
+python plot_paper_success_example.py  # the closed-loop episode figure</pre>
+      <p>To run an experiment from scratch, given the pretrained checkpoint and dataset:</p>
+      <pre>python exp_resolution_curve.py --env tworoom
+python exp_frame_sweep.py --env reacher --n-eval 200</pre>
+      <p>Full instructions, dependencies, and a file-by-file guide to the repo are in the <a href="https://github.com/OliverZ-dot/lewm-resolution-collapse#readme">README</a>.</p>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>
+      This work plans entirely through <a href="https://github.com/lucas-maes/le-wm">LeWM</a> — Lucas Maes,
+      Quentin Le Lidec, Damien Scieur, Yann LeCun, and Randall Balestriero's end-to-end
+      joint-embedding world model — and the <code class="inline">stable_worldmodel</code> /
+      <code class="inline">stable_pretraining</code> packages that ship with it. All credit for the
+      architecture and training recipe belongs to them; the resolution-collapse diagnosis, causal
+      evidence, and fix on this page are this project's own contribution.
+    </p>
+    <p><a href="https://github.com/OliverZ-dot/lewm-resolution-collapse">Source code</a> · MIT licensed.</p>
+  </div>
+</footer>
+
+</body>
+</html>

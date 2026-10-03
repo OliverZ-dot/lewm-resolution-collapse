@@ -1,0 +1,110 @@
+# Model architecture is loaded directly from config/train/model/lewm.yaml in
+# explore_train.py (not via Hydra's defaults list) to avoid depending on
+# Hydra's cross-group search-path resolution; this guarantees byte-for-byte
+# the same architecture config the original `train.py` uses.
+model_config_path: ${hydra:runtime.cwd}/config/train/model/lewm.yaml
+
+# ---------------------------------------------------------------------------
+# Everything under `shared_*` / `optimizer` / `loss` / architecture dims is
+# copied verbatim from config/train/lewm.yaml + config/train/data/tworoom.yaml
+# so the *only* thing that differs across `exploration` conditions is which
+# policy collects the training trajectories. This is what makes the A/B/C/D
+# comparison across exploration conditions fair (not used by the paper's
+# diagnostic experiments themselves).
+# ---------------------------------------------------------------------------
+
+seed: 3072
+img_size: 224
+embed_dim: 192
+history_size: 3
+num_preds: 1
+device: cuda         # single GPU is sufficient (see Appendix A)
+
+env_name: swm/TwoRoom-v1
+frameskip: 5         # matches config/train/data/tworoom.yaml
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024
+
+# --- exploration policy (overridden on the command line: exploration=random|disagreement|novelty|combined)
+exploration:
+  name: disagreement
+  num_heads: 5
+  bootstrap_prob: 0.8
+  w_disagreement: 1.0
+  w_novelty: 0.0
+  novelty:
+    num_proj: 1024
+    num_bins: 64
+    value_range: 6.0
+
+# --- CEM planner, identical to config/eval/solver/cem.yaml + config/eval/tworoom.yaml
+plan_config:
+  horizon: 5
+  receding_horizon: 5
+  action_block: 5
+  history_len: 1
+
+solver:
+  num_samples: 300
+  var_scale: 1.0
+  n_steps: 30
+  topk: 30
+
+# --- generational collect -> train -> eval loop budget (identical across all `exploration` conditions)
+loop:
+  n_generations: 8
+  episodes_per_gen: 20
+  max_episode_steps: 100
+  train_steps_per_gen: 200
+  batch_size: 64
+  eval_every: 1
+  eval_episodes: 50
+  eval_seed: 1000            # disjoint from training seeds
+  buffer_max_steps: 20000   # >= episodes_per_gen*max_episode_steps*n_generations (20*100*8=16000); ReplayBuffer eagerly allocates max_steps*pixel_shape on first write, so this is sized to what's actually ever collected instead of the original's much larger, memory-wasteful headroom
+  density_update_every: 5    # training steps between RunningProjectionDensity updates
+
+# --- dataset-driven goal-reaching eval, mirroring config/eval/tworoom.yaml exactly:
+# a *fixed* held-out probe set of (init_state, goal_state) pairs is collected
+# once via RandomPolicy (same seed for every `exploration` condition), then
+# every generation's eval reuses those same pairs so success-rate curves are
+# only ever comparing "how good is this generation's model", never "did this
+# condition get an easier/harder goal set".
+#
+# `num_probe_episodes`/`probe_max_steps` (synthetic, on-the-fly RandomPolicy
+# probe set) are what explore_train.py's own generational loop
+# (`build_eval_probe_set`) uses. `dataset_name`/`dataset_keys_to_cache`
+# (real `tworoom` HDF5 dataset, mirrors config/eval/tworoom.yaml exactly)
+# are what eval_lewm_baseline.py / eval_objective_variants.py / fit_probe.py
+# use for the fair, paper-matching real-data protocol (real_eval.py) --
+# both blocks coexist here since TwoRoom's own exploration-loop runs never
+# needed the real-data fix (only PushT's near-0% success rate did), but
+# Experiment 4's pretrained-checkpoint evals need the real protocol on
+# every env for consistency.
+eval:
+  num_probe_episodes: 30
+  probe_max_steps: 80        # must exceed goal_offset_steps
+  goal_offset_steps: 25
+  eval_budget: 30
+  callables:
+    - method: _set_state
+      args:
+        state:
+          value: proprio
+    - method: _set_goal_state
+      args:
+        goal_state:
+          value: goal_proprio
+  dataset_name: tworoom
+  dataset_keys_to_cache: [action, proprio]
+
+output_dir: ${hydra:runtime.output_dir}

@@ -1,0 +1,91 @@
+# Same fair-comparison philosophy as config/explore/tworoom.yaml: everything
+# under optimizer/loss/plan_config/solver is copied verbatim so PushT
+# conditions are only ever compared against each other (and against the
+# official pretrained checkpoint) on identical budgets.
+#
+# Eval protocol mirrors the paper's real-data protocol (real
+# `pusht_expert_train` dataset, StandardScaler-normalized action/proprio/
+# state) instead of an on-the-fly synthetic probe set -- PushT's real
+# action std (~0.21) is far from the raw Box's implicit 1.0, so without
+# this normalization CEM's var_scale=1.0 sampling was searching ~5x too
+# coarse; real_eval.py implements this protocol.
+model_config_path: ${hydra:runtime.cwd}/config/train/model/lewm.yaml
+
+seed: 3072
+img_size: 224
+embed_dim: 192
+history_size: 3
+num_preds: 1
+device: cuda
+
+env_name: swm/PushT-v1
+frameskip: 5
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024
+
+exploration:
+  name: disagreement
+  num_heads: 5
+  bootstrap_prob: 0.8
+  w_disagreement: 1.0
+  w_novelty: 0.0
+  novelty:
+    num_proj: 1024
+    num_bins: 64
+    value_range: 6.0
+
+plan_config:
+  horizon: 5
+  receding_horizon: 5
+  action_block: 5
+  history_len: 1
+
+solver:
+  num_samples: 300
+  var_scale: 1.0
+  n_steps: 30
+  topk: 30
+
+loop:
+  n_generations: 8
+  episodes_per_gen: 20
+  max_episode_steps: 100
+  train_steps_per_gen: 200
+  batch_size: 64
+  eval_every: 1
+  eval_episodes: 50
+  eval_seed: 1000
+  buffer_max_steps: 20000
+  density_update_every: 5
+
+# Real-dataset eval protocol (mirrors config/eval/pusht.yaml). `state` is
+# PushT's cached low-dim physical-quantity column (7-dim: agent xy + block
+# xy + block angle + agent vx/vy) -- used both for CEM's `_set_state`/
+# `_set_goal_state` callables and, in Experiment 4 Idea 2, as the
+# regression target for fit_probe.py's linear probe.
+eval:
+  dataset_name: pusht_expert_train
+  dataset_keys_to_cache: [action, proprio, state]
+  goal_offset_steps: 25
+  eval_budget: 50
+  callables:
+    - method: _set_state
+      args:
+        state:
+          value: state
+    - method: _set_goal_state
+      args:
+        goal_state:
+          value: goal_state
+
+output_dir: ${hydra:runtime.output_dir}

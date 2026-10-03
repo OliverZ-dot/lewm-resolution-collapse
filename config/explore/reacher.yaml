@@ -1,0 +1,87 @@
+# Same fair-comparison template as tworoom.yaml/pusht.yaml. Reacher is a
+# dm_control MuJoCo env rendered offscreen (see MUJOCO_GL=egl set at the top
+# of explore_train.py) and its `set_target_qpos` callable asserts the world
+# was constructed with `task='qpos_match'` -- passed via `env_kwargs` below,
+# which explore_train.py/eval_lewm_baseline.py forward into `swm.World(**env_kwargs)`.
+model_config_path: ${hydra:runtime.cwd}/config/train/model/lewm.yaml
+
+seed: 3072
+img_size: 224
+embed_dim: 192
+history_size: 3
+num_preds: 1
+device: cuda
+
+env_name: swm/ReacherDMControl-v0
+env_kwargs:
+  task: qpos_match
+frameskip: 5
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024
+
+exploration:
+  name: disagreement
+  num_heads: 5
+  bootstrap_prob: 0.8
+  w_disagreement: 1.0
+  w_novelty: 0.0
+  novelty:
+    num_proj: 1024
+    num_bins: 64
+    value_range: 6.0
+
+plan_config:
+  horizon: 5
+  receding_horizon: 5
+  action_block: 5
+  history_len: 1
+
+solver:
+  num_samples: 300
+  var_scale: 1.0
+  n_steps: 30
+  topk: 30
+
+loop:
+  n_generations: 8
+  episodes_per_gen: 20
+  max_episode_steps: 100
+  train_steps_per_gen: 200
+  batch_size: 64
+  eval_every: 1
+  eval_episodes: 50
+  eval_seed: 1000
+  buffer_max_steps: 20000
+  density_update_every: 5
+
+# Real-dataset eval protocol. Reacher's real dataset only caches `action`
+# (qpos/qvel are set directly on the env via the callables below, not read
+# out of a cached low-dim column).
+eval:
+  dataset_name: dmc/reacher_random
+  dataset_keys_to_cache: [action]
+  goal_offset_steps: 25
+  eval_budget: 50
+  callables:
+    - method: set_state
+      args:
+        qpos:
+          value: qpos
+        qvel:
+          value: qvel
+    - method: set_target_qpos
+      args:
+        target_qpos:
+          value: goal_qpos
+
+output_dir: ${hydra:runtime.output_dir}

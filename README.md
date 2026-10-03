@@ -2,6 +2,8 @@
 
 **Why a latent-space planner's own world model becomes useless for ranking exactly at the one frame the planner actually uses — and a one-line fix that recovers the lost performance.**
 
+[**Project page**](https://oliverz-dot.github.io/lewm-resolution-collapse/) · [Paper (PDF)](paper/resolution_collapse.pdf) · [Checkpoints](https://huggingface.co/TingheOliver/lewm-resolution-collapse)
+
 <p align="center">
   <img src="assets/success_vs_baseline.gif" width="680">
   <br>

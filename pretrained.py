@@ -15,6 +15,7 @@ Shared by:
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -24,11 +25,15 @@ from omegaconf import OmegaConf
 from model_utils import build_model
 
 
+def _stablewm_home() -> Path:
+    return Path(os.environ.get("STABLEWM_HOME", Path.home() / ".stable_worldmodel"))
+
+
 HF_CACHE = {
-    'tworoom': Path('/root/.stable_worldmodel/hf_tworooms'),
-    'pusht': Path('/root/.stable_worldmodel/hf_pusht'),
-    'cube': Path('/root/.stable_worldmodel/hf_cube'),
-    'reacher': Path('/root/.stable_worldmodel/hf_reacher'),
+    'tworoom': _stablewm_home() / 'hf_tworooms',
+    'pusht': _stablewm_home() / 'hf_pusht',
+    'cube': _stablewm_home() / 'hf_cube',
+    'reacher': _stablewm_home() / 'hf_reacher',
 }
 
 
